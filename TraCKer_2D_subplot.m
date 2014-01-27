@@ -7,7 +7,7 @@ frames is the number of frames in the tiff file.
 windowsize is the width of the analysis window.
 
 Version 0.0 created by Comert Kural (kural.1@osu.edu)
-Version 1.0 by Josh Ferguson (ferguson.621@osu.edu)
+Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -changed from a script to a function
     -added comments
     -added waitbars
