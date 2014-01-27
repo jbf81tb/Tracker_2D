@@ -18,6 +18,7 @@ Version 1.0 by Josh Ferguson (ferguson.621@osu.edu)
         >cleaned up redundant variables
     -added 'save all' feature
     -allowed option for csv writing instead of xls
+    -began development branch in Git
  TO DO
     -statistical selection of CCPs
     -statistical slection of frame threshold
