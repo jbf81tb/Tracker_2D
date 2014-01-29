@@ -1,4 +1,4 @@
-function TraCKer_2D_subplot_current(filename,frames,windowsize)
+function TraCKer_2D_subplot(filename,frames,windowsize)
 %Particle Tracker: Input filename, frames, and window size to get tracking.
 %{
 filname is the name of the tiff file (with extension) that you want to
@@ -28,8 +28,6 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
 %}
 windowsize = 2*floor((windowsize+1)/2) - 1;
 PixelSize = 10; % nm
-%gaus=fspecial('gaussian', 5, 1.5);  %Creates a filter similar to
-%lap=[-1,-1,-1;-1,8,-1;-1,-1,-1];    %the mexican hat filter.
 mex = -fspecial('log',15,1.5);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
@@ -43,8 +41,6 @@ set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for j=1:frames
     IMG(:,:,j) = imread(filename,'Index',j);
     J(:,:,j) = imfilter(IMG(:,:,j),mex,'symmetric');
-    %J(:,:,j) = imfilter(IMG(:,:,j),gaus,'symmetric');
-    %J(:,:,j) = imfilter(J(:,:,j),lap,'symmetric');
     waitbar(j / frames)
 end
 close(h);
