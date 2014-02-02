@@ -30,13 +30,13 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
 %}
 windowsize = 2*floor((windowsize+1)/2) - 1;
 PixelSize = 10; % nm
-mex = -fspecial('log',15,1.5);
+mex = -fspecial('log',15,2);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
 s = size(ss);
 J = zeros(s(1),s(2),frames,'uint16'); 
 IMG = zeros(s(1),s(2),frames,'double');
-Scale = ones([1,frames],'double');
+scale = ones([1,frames],'double');
 
 h = waitbar(0,'Filtering images...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
@@ -45,7 +45,7 @@ for j=1:frames
     IMG(:,:,j) = imread(filename,'Index',j);
     J(:,:,j) = imfilter(IMG(:,:,j),mex,'symmetric');
     [x,y] = create_histogram(J(:,:,j));
-    Scale(j) = best_fit_approx_n(x,y,5);
+    scale(j) = best_fit_approx_n(x,y,5);
     waitbar(j / frames)
 end
 close(h);
@@ -59,7 +59,7 @@ h = waitbar(0,'Isolating CCPs...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for k =1:frames
-    BW(:,:,k) = imregionalmax(J(:,:,k)/Scale(k), 8);
+    BW(:,:,k) = imregionalmax(J(:,:,k)/scale(k), 8);
     waitbar(k / frames)
 end
 close(h);
@@ -426,13 +426,19 @@ while k<length(xx)
         ysum2 = ysum2 + yy(j)^2;
         xysum = xysum + xx(j)*yy(j);
     end
-    sx = sqrt((xsum2-xsum^2/w)/(w-1));
-    sy = sqrt((ysum2-ysum^2/w)/(w-1));
-    m(i) = (w*xysum - xsum*ysum)/(w*xsum2-xsum^2);
-    b = (ysum - m(i)*xsum)/w;
-    new_y(i) = m(i)*xx(k)+b;
-    x_int(i) = -b/m(i);
-    r(i) = ((xysum-xsum*ysum/w)/((w-1)*sx*sy))^2;
+    
+    if ysum2 == 0
+        m(i)=0;new_y(i)=0;x_int(i)=0;r(i)=0;
+    else
+        sx = sqrt((xsum2-xsum^2/w)/(w-1));
+        sy = sqrt((ysum2-ysum^2/w)/(w-1));
+        m(i) = (w*xysum - xsum*ysum)/(w*xsum2-xsum^2);
+        b = (ysum - m(i)*xsum)/w;
+        new_y(i) = m(i)*xx(k)+b;
+        x_int(i) = -b/m(i);
+        r(i) = ((xysum-xsum*ysum/w)/((w-1)*sx*sy))^2;
+    end
+    
     if i < n
         k = k+1+n-i;
     elseif i > (length(x)-n)
@@ -442,5 +448,11 @@ while k<length(xx)
     end
     i=i+1;    
 end
-scale = ceil(mean(x_int(r>0.95)));
+done = false; dum = false; i = 2;
+while done ~= true
+    dum = [dum r(i)>0.95]; %#ok<AGROW>
+    if (r(i+1)<0.95 && r(i)>0.95), done=true; end
+    i=i+1;
+end
+scale = ceil(mean(x_int(dum)));
 end
