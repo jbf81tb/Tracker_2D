@@ -36,6 +36,7 @@ ss = imread(filename);
 s = size(ss);
 J = zeros(s(1),s(2),frames,'uint16'); 
 IMG = zeros(s(1),s(2),frames,'double');
+Scale = ones([1,frames],'double');
 
 h = waitbar(0,'Filtering images...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
@@ -43,47 +44,13 @@ set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for j=1:frames
     IMG(:,:,j) = imread(filename,'Index',j);
     J(:,:,j) = imfilter(IMG(:,:,j),mex,'symmetric');
+    [x,y] = create_histogram(J(:,:,j));
+    Scale(j) = best_fit_approx_n(x,y,5);
     waitbar(j / frames)
 end
 close(h);
 
 MEAN=mean(J,3);
-SHOW = J(:,:,2);
-Scale=(1:3000)';
-colormap(gray);
-subplot(1,7,1);
-    imagesc(Scale);
-    set(gca,'XTickLabel',[]);
-    title('Select scaling');
-
-%This section allows you to control the level of specificity that gets put
-%into the selecting pit signals. Should eventually be automated for
-%statistical selection.
-k=0;
-while k ~= 1
-subplot(1,7,[2 3]);
-    imagesc(SHOW);
-    set(gca,'XTickLabel',[],'YTickLabel',[]);
-subplot(1,7,1);
-    if k==2; title('Try again'); end
-    [~,Vy] = ginput(1);
-    Coeff=Vy;
-    imagesc(Scale);
-    set(gca,'XTickLabel',[]);
-    SHOWDiv=SHOW/Coeff;
-subplot(1,7,[4 5]);
-    imagesc(SHOWDiv);
-    BWSHOW=imregionalmax(SHOWDiv, 4);
-    set(gca,'XTickLabel',[],'YTickLabel',[]);
-subplot(1,7,[6 7]);
-    imagesc(BWSHOW);
-    set(gca,'XTickLabel',[],'YTickLabel',[]);
-subplot(1,7,1);
-    line([.5 1.5],[Coeff Coeff],'Color','g');
-    set(gca,'XTickLabel',[]);
-k = menu('Do you want to keep this?','Yes','No') ;
-end
-close;
 
 %Predefine matrix containing binary information of pits.
 BW = zeros(s(1),s(2),frames);
@@ -92,7 +59,7 @@ h = waitbar(0,'Isolating CCPs...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for k =1:frames
-    BW(:,:,k) = imregionalmax(J(:,:,k)/Coeff, 8);
+    BW(:,:,k) = imregionalmax(J(:,:,k)/Scale(k), 8);
     waitbar(k / frames)
 end
 close(h);
@@ -282,7 +249,7 @@ close(h);
 [Boy2,~]=size(TraceX); %Boy2 is the number of traces.
 %Makes a directory for csv files. If you have Excel, comment this out and
 %use a single xls file with sheets. see line 395
-foldername = sprintf('%s_%u',filename(1:length(filename)-5),uint16(Coeff));
+foldername = sprintf('%s_%u',filename(1:length(filename)-5));
 mkdir(foldername);
 %trace_filename=[filename, '.xls'];
 
@@ -410,41 +377,70 @@ while k ~= 4 %4 menu options, and the last option closes
     if l == 1, k = 4; end
 end
 close;
+save('test.mat');
 end
 
-function [ A ] = gen_mexi_2D( size )
-%2D Mexi Hat: Generates a normalized 2D mexican hat filter
-bound = 5; % boundary for mexican hat
-size = floor(size/2)*2+1; % ensure we have odd number
-max = ceil(size/2); % find mid point of odd number
-scale = max/bound; % relate indexing to actual value
-resolution = 100000; % resolution of function
+function [ x, y ] = create_histogram (J)
+%Creating a log-scaled histogram of image intensities.
+[why,ex] = hist(double(J(:)),single(max(max(J))));
+y = why(2:length(why));
+x = ex(2:length(ex));
+y = log(y+1);
+end
 
-% special mexihat_r function for 2D purposes
-% altered to allow for laplacian in cylindrical coordinates
-mexi = mexihat_r(0,bound*sqrt(2),floor(bound*resolution*sqrt(2)));
-A = zeros(size,'double');
-for i=1:size
-    for j=1:size
-        if (i == max && j == max), A(i,j) = mexi(1);
-        else
-            r = sqrt(((i-max)/scale)^2+((j-max)/scale)^2);
-            A(i,j) = mexi(floor(r*resolution));
-        end
+function [ scale ] = best_fit_approx_n( x, y, n )
+%Smooth a function using straight line approximations.
+%   Currently store a bunch of detailed variables, but 
+%   I only need it for the x intercept.
+w = 2*n+1;
+xx = x(1);
+for i = 1:(length(x)-1)
+    if i <= n
+        d = (x(i+1)-x(i))/(n+1-i);
+    elseif i >= (length(x)-n)
+        d = (x(i+1)-x(i))/(n-(length(x)-1-i));
+    else
+        d = 1;
     end
+        
+        xx = [xx (x(i)+d):d:x(i+1)]; %#ok<AGROW>
 end
+yy = spline(x,y,xx);
+
+new_y = zeros([1,length(y)]);
+m = zeros([1,length(y)]);
+x_int = zeros([1,length(y)]);
+r = zeros([1,length(y)]);
+
+new_y(1) = y(1);
+new_y(length(y)) = y(length(y));
+
+
+k = 1+n; i = 2;
+while k<length(xx)
+    xsum = 0; ysum = 0; xsum2 = 0; ysum2 = 0; xysum = 0;
+    for j = (k-n):(k+n)
+        xsum = xsum + xx(j);
+        ysum = ysum + yy(j);
+        xsum2 = xsum2 + xx(j)^2;
+        ysum2 = ysum2 + yy(j)^2;
+        xysum = xysum + xx(j)*yy(j);
+    end
+    sx = sqrt((xsum2-xsum^2/w)/(w-1));
+    sy = sqrt((ysum2-ysum^2/w)/(w-1));
+    m(i) = (w*xysum - xsum*ysum)/(w*xsum2-xsum^2);
+    b = (ysum - m(i)*xsum)/w;
+    new_y(i) = m(i)*xx(k)+b;
+    x_int(i) = -b/m(i);
+    r(i) = ((xysum-xsum*ysum/w)/((w-1)*sx*sy))^2;
+    if i < n
+        k = k+1+n-i;
+    elseif i > (length(x)-n)
+        k = k+1+n-(length(x)-i);
+    else
+        k = k+1;
+    end
+    i=i+1;    
 end
-
-function [out1,out2] = mexihat_r(LB,UB,N)
-%MEXIHAT_R Used for 2D Mexican hat wavelet.
-%   [PSI,X] = MEXIHAT_R(LB,UB,N) returns values of 
-%   the 2D Mexican hat wavelet on an N point regular
-%   grid in the interval [LB,UB].
-%   Output arguments are the wavelet function PSI
-%   computed on the grid X.
-
-% Compute values of the Mexican hat wavelet.
-out2 = linspace(LB,UB,N);        % wavelet support.
-out1 = out2.^2;
-out1 = (2/(sqrt(3)*pi^0.25)) * exp(-out1/2) .* (2-out1);
+scale = ceil(mean(x_int(r>0.95)));
 end
