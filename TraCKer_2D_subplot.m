@@ -26,6 +26,7 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -movement prediction
     -fix tracing for inturrupted readings
     -use actual mexican hat filter
+    -check if branches work
 %}
 windowsize = 2*floor((windowsize+1)/2) - 1;
 PixelSize = 10; % nm
