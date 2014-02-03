@@ -19,18 +19,18 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -added 'save all' feature
     -allowed option for csv writing instead of xls
     -began development branch in Git
+    -all future changes will be recorded with Git
  TO DO
-    -statistical selection of CCPs
     -statistical slection of frame threshold
     -domain analysis
     -movement prediction
     -fix tracing for inturrupted readings
-    -use actual mexican hat filter
-    -check if branches work
+    -take all except
+    -mark selected traces
 %}
 windowsize = 2*floor((windowsize+1)/2) - 1;
-PixelSize = 10; % nm
-mex = -fspecial('log',15,2);
+PixelSize = 160; % nm
+mex = -fspecial('log',11,2);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
 s = size(ss);
@@ -179,37 +179,35 @@ for k=1:frames-1
             tracey=zeros(1,frames);
             traceint=zeros(1,frames);
 
-        dif=Inf(Boy);
-        difbin=zeros(Boy,frames-k+1,'uint8');
+        dif=Inf([1,Boy]);
+        check_dif=Inf([1,Boy]);
+        difbin=false(Boy,frames-k+1);
         
-        for l=1:frames-k+1
+        %for l=1:frames-k+1
+        l = k+1;
+        while l < frames - 1
             %create distance vector to find distance of all particles from
             %X(m,k), with the object of finding the closest
             for n=1:Boy
-                dif(n)=sqrt((X(m,k)-X(n,k+l-1))^2+(Y(m,k)-Y(n,k+l-1))^2);
+                dif(n)=sqrt((X(m,l)-X(n,l+1))^2+(Y(m,l)-Y(n,l+1))^2);
             end
+            check = find(dif==min(dif));
             for n=1:Boy
-                if dif(n)<dt
-                    if dif(n)==min(dif(:))
-                        if l>ft
-                        %sets a frame threshold, where if we recieve no
-                        %signal from this area, constrained by the distance
-                        %threshold, for ft frames then it could just be a
-                        %new particle taking its place in the same region
-                        if sum(sum(difbin(:,l-ft:l-1))) == 0, break, end
-                        end
-                    %when closest point is found, mark it in difbin
-                    difbin(n,l)=1;
-                    break
-                    end
-                end
+                check_dif(n)=sqrt((X(check,l+1)-X(n,l))^2+(Y(check,l+1)-Y(n,l))^2);
             end
+            if find(check_dif==min(check_dif)) ~= m %#ok<*ALIGN>
+                if dif(check)<dt
+                    %when closest point is found, mark it in difbin
+                    difbin(check,l)=true;
+                else break; end
+            else break; end
+            l = l+1;
         end
         
        
             %Load temporary trace vectors with x, y, and intensity data.
             for n=1:Boy
-                for l=1:frames-k+1
+                for l=k:frames-1
                     if difbin(n,l)==1;
                         tracex(k+l-1)=X(n,k+l-1);
                         tracey(k+l-1)=Y(n,k+l-1);
@@ -451,7 +449,7 @@ end
 done = false; dum = false; i = 2;
 while done ~= true
     dum = [dum r(i)>0.95]; %#ok<AGROW>
-    if (r(i+1)<0.95 && r(i)>0.95), done=true; end
+    if (r(i)>0.95 && r(i+1)<0.95 && r(i+2)<0.95), done=true; end
     i=i+1;
 end
 scale = ceil(mean(x_int(dum)));
