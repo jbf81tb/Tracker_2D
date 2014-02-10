@@ -1,4 +1,4 @@
-function TraCKer_2D_subplot(filename,frames,windowsize)
+function TraCKer_2D_subplot(filename,frames, varargin)
 %Particle Tracker: Input filename, frames, and window size to get tracking.
 %{
 filname is the name of the tiff file (with extension) that you want to
@@ -28,9 +28,19 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -take all except
     -mark selected traces
 %}
+if nargin == 2
+    windowsize = 5; filter = 'a';
+elseif nargin == 3
+    windowsize = varargin{1}; filter = 'a';
+elseif nargin == 4
+    windowsize = varargin{1}; filter = varargin{2};
+else
+    error('Too many input arguments');
+end
+
 windowsize = 2*floor((windowsize+1)/2) - 1;
 PixelSize = 160; % nm
-mex = -fspecial('log',11,2);
+mex = -fspecial('log',13,1.5);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
 s = size(ss);
@@ -44,13 +54,63 @@ set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for j=1:frames
     IMG(:,:,j) = imread(filename,'Index',j);
     J(:,:,j) = imfilter(IMG(:,:,j),mex,'symmetric');
-    [x,y] = create_histogram(J(:,:,j));
-    scale(j) = best_fit_approx_n(x,y,5);
+    if filter == 'a'
+        [x,y] = create_histogram(J(:,:,j));
+        scale(j) = best_fit_approx_n(x,y,5);
+    end
     waitbar(j / frames)
 end
 close(h);
 
 MEAN=mean(J,3);
+if filter == 'm'
+    SHOW = J(:,:,2);
+    Scale=(1:3000)';
+    colormap(gray);
+    subplot(1,7,1);
+        imagesc(Scale);
+        set(gca,'XTickLabel',[]);
+        title('Select scaling');
+
+    %This section allows you to control the level of specificity that gets put
+    %into the selecting pit signals. Should eventually be automated for
+    %statistical selection.
+    k=0;
+    while k ~= 1
+    subplot(1,7,[2 3]);
+        imagesc(SHOW);
+        set(gca,'XTickLabel',[],'YTickLabel',[]);
+    subplot(1,7,1);
+        if k==2; title('Try again'); end
+        [~,Vy] = ginput(1);
+        Coeff=Vy;
+        imagesc(Scale);
+        set(gca,'XTickLabel',[]);
+        SHOWDiv=SHOW/Coeff;
+    subplot(1,7,[4 5]);
+        imagesc(SHOWDiv);
+        BWSHOW=imregionalmax(SHOWDiv, 4);
+        set(gca,'XTickLabel',[],'YTickLabel',[]);
+    subplot(1,7,[6 7]);
+        imagesc(BWSHOW);
+        set(gca,'XTickLabel',[],'YTickLabel',[]);
+    subplot(1,7,1);
+        line([.5 1.5],[Coeff Coeff],'Color','g');
+        set(gca,'XTickLabel',[]);
+    k = menu('Do you want to keep this?','Yes','No') ;
+    end
+    close;
+    
+    for k = 1:frames
+        scale(k) = Coeff;
+    end
+end
+
+if (filter ~= 'm' || filter ~= 'a')
+    for k = 1:frames
+        scale(k) = filter;
+    end
+end
 
 %Predefine matrix containing binary information of pits.
 BW = zeros(s(1),s(2),frames);
@@ -151,8 +211,8 @@ Xc(k)=WSumX/TopRow;
 Yc(k)=WSumY/TopColum;
 
 %Using center of intensity to augment middle of the spot.
-X(q,k)=double(Px)+Xc(k)-double((windowsize+1)/2); %#ok<AGROW>
-Y(q,k)=double(Py)+Yc(k)-double((windowsize+1)/2); %#ok<AGROW>
+X(q,k)=double(Px)+Xc(k)-double((windowsize+1)/2); %#ok<*AGROW>
+Y(q,k)=double(Py)+Yc(k)-double((windowsize+1)/2);
 
 end
 waitbar(k / frames)
@@ -160,6 +220,12 @@ end
 close(h)
 
 [Boy,~]=size(X);
+for j = 1:frames
+    for i = 1:Boy
+        if X(i,j) == 0, X(i,j) = Inf; end
+        if Y(i,j) == 0, Y(i,j) = Inf; end
+    end
+end
 TraceX = zeros(Boy,frames);
 TraceY = zeros(Boy,frames);
 TraceINT = zeros(Boy,frames);
@@ -173,70 +239,74 @@ bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for k=1:frames-1
     for m=1:Boy
-        if X(m,k)>0
-        if X(m,k)<s(2)
+        if (X(m,k)>0 && X(m,k)<s(2))
             tracex=zeros(1,frames);
             tracey=zeros(1,frames);
             traceint=zeros(1,frames);
 
         dif=Inf([1,Boy]);
         check_dif=Inf([1,Boy]);
-        difbin=false(Boy,frames-k+1);
+        check=zeros([1,frames],'uint16');
+        dum_x = X(m,k);
+        dum_y = Y(m,k);
         
-        %for l=1:frames-k+1
-        l = k+1;
-        while l < frames - 1
+        l = k;
+        check(l) = m;
+        while l <= frames - 1
             %create distance vector to find distance of all particles from
             %X(m,k), with the object of finding the closest
             for n=1:Boy
-                dif(n)=sqrt((X(m,l)-X(n,l+1))^2+(Y(m,l)-Y(n,l+1))^2);
+                dif(n)=sqrt((dum_x-X(n,l+1))^2+(dum_y-Y(n,l+1))^2);
             end
-            check = find(dif==min(dif));
+            check(l+1) = find(dif==min(dif));
             for n=1:Boy
-                check_dif(n)=sqrt((X(check,l+1)-X(n,l))^2+(Y(check,l+1)-Y(n,l))^2);
+                check_dif(n)=sqrt((X(check(l+1),l+1)-X(n,l))^2+(Y(check(l+1),l+1)-Y(n,l))^2);
             end
-            if find(check_dif==min(check_dif)) ~= m %#ok<*ALIGN>
-                if dif(check)<dt
-                    %when closest point is found, mark it in difbin
-                    difbin(check,l)=true;
-                else break; end
-            else break; end
+            if (find(check_dif==min(check_dif)) ~= check(l) || dif(check(l+1))>dt)
+                check(l+1) = 0;
+            else
+                dum_x = X(check(l+1),l+1); dum_y = Y(check(l+1),l+1);
+            end
+                if (l-k)>ft
+                        %sets a frame threshold, where if we recieve no
+                        %signal from this area, constrained by the distance
+                        %threshold, for ft frames then it could just be a
+                        %new particle taking its place in the same region
+                        if sum(check(l-ft:l)) == 0, break, end
+                end
             l = l+1;
         end
         
        
             %Load temporary trace vectors with x, y, and intensity data.
-            for n=1:Boy
-                for l=k:frames-1
-                    if difbin(n,l)==1;
-                        tracex(k+l-1)=X(n,k+l-1);
-                        tracey(k+l-1)=Y(n,k+l-1);
-                        traceint(k+l-1)=INT(n,k+l-1);
-                        %Now that these points have appeared in a trace we
-                        %have to make sure they no longer appear in any
-                        %further traces, so we set them to infinity.
-                        X(n,k+l-1)=Inf; %#ok<AGROW>
-                        Y(n,k+l-1)=Inf; %#ok<AGROW>
-                    end
+            for l=k:frames
+                if check(l) ~= 0;
+                    tracex(l)=X(check(l),l);
+                    tracey(l)=Y(check(l),l);
+                    traceint(l)=INT(check(l),l);
+                    %Now that these points have appeared in a trace we
+                    %have to make sure they no longer appear in any
+                    %further traces, so we set them to infinity.
+                    X(check(l),l)=Inf;
+                    Y(check(l),l)=Inf;
                 end
-            end    
+            end
         
         %Loading a more permanent trace vector, filtering out traces which
         %are too short and that aren't made of consecutive points, also
         %creating a new numbering system.
         pos = [find(tracex) 0];
-        num=numel(pos)-1;
+        num=numel(pos);
         if num>ft
-             son=zeros(1,num+1);
-             son(2:num+1)=pos(1:num);
+             son=zeros(1,num);
+             son(2:num)=pos(1:num-1);
              fark=pos-son;
-             if numel(find(fark==1))>(ft-1)
+             if numel(find(fark==1))>=ft
                 p=p+1;
                 TraceX(p,:)=tracex;
                 TraceY(p,:)=tracey;
                 TraceINT(p,:)=traceint;
              end
-        end
         end
         end
     end
@@ -247,7 +317,7 @@ close(h);
 [Boy2,~]=size(TraceX); %Boy2 is the number of traces.
 %Makes a directory for csv files. If you have Excel, comment this out and
 %use a single xls file with sheets. see line 395
-foldername = sprintf('%s_%u',filename(1:length(filename)-5));
+foldername = sprintf('%s_%u',filename(1:length(filename)-4),max(scale));
 mkdir(foldername);
 %trace_filename=[filename, '.xls'];
 
@@ -258,10 +328,9 @@ if l == 2
         subplot(2,2,[1 3])
         imshow(-MEAN,[]);
         hold;
-    colors='brgkycm';
+    colors='brgycm';
     for i=1:Boy2
-    j=mod(i,7);
-    if j==0, j=7; end
+    j=6-mod(i,6);
     subplot(2,2,[1 3]) %make a big plot of all traces overlaying mean image
     plot(TraceX(i,TraceX(i,:)>0), TraceY(i,TraceY(i,:)>0), colors(j), 'linewidth', 2);
     hold on;
@@ -272,17 +341,14 @@ Tx = 0;
 Ty = 0;
 k = uint8(0);
 while k ~= 4 %4 menu options, and the last option closes
-    if l == 2
-        [Tx,Ty] = ginput(1); %click on a trace to see it in more detail
-    end
+    if l == 2, [Tx,Ty] = ginput(1); end %click on a trace to see it in more detail
     for m=1:Boy2
         MeanX=mean(TraceX(m,TraceX(m,:)>0));
         MeanY=mean(TraceY(m,TraceY(m,:)>0));
-         if sqrt((MeanX-Tx)^2+(MeanY-Ty)^2)<windowsize || l == 1
+         if (sqrt((MeanX-Tx)^2+(MeanY-Ty)^2)<windowsize || l == 1)
              T=find(TraceX(m,:));
              if l == 2
-                j=mod(m,7);
-                if j==0, j=7; end  
+                j=6-mod(m,6);
                 TX=TraceX(m,T);
                 TY=TraceY(m,T);
                 %here we plot the x-y details of the CCP
@@ -345,22 +411,25 @@ while k ~= 4 %4 menu options, and the last option closes
              subplot(2,2,4);
              plot(TraceINT(m,:),'r','LineWidth',3);
              hold;
+             subplot(2,2,[1 3]);
+             plot(TraceX(m,TraceX(m,:)>0), TraceY(m,TraceY(m,:)>0), 'k', 'linewidth', 2);
   
              k = menu('Do you want to keep this?','Yes and Continue','No and Continue','Yes and Quit','No and Quit') ;
          end    
              %if the CCP is good then throw that data into a file or a sheet
-              if (k == 1 || k == 3) || l == 1
+              if ((k == 1 || k == 3) || l == 1)
                   Tr=NaN(frames,4);
                   Tr(:,1)=1:frames;   % Frame Num
                   Tr(:,2)=TraceX(m,:)*PixelSize;  % X
                   Tr(:,3)=TraceY(m,:)*PixelSize;  % Y
                   Tr(:,4)=TraceINT(m,:);  % INT
                  
-                  index=find(TraceX(m,:)>0, 1 );
+                  indexf=find(TraceX(m,:)>0, 1, 'first' );
+                  indexl=find(TraceX(m,:)>0, 1, 'last' );
                   
                   %below is code to write to a folder of csv's, or an xls
                   %file with multiple sheets. see line 283
-                  trace_filename = [int2str(uint16(Tr(index,2)/PixelSize)), '_', int2str(uint16(Tr(index,3)/PixelSize))];
+                  trace_filename = [int2str(uint16(Tr(indexf,1))), '_', int2str(uint16(Tr(indexf,2)/PixelSize)), 'x', int2str(uint16(Tr(indexf,3)/PixelSize)), 'y', '_to_',int2str(uint16(Tr(indexl,2)/PixelSize)), 'x', int2str(uint16(Tr(indexl,3)/PixelSize)), 'y'];
                   trace_path = sprintf('%s\\%s.csv',foldername,trace_filename);
                   csvwrite(trace_path,Tr);
                   %sheetname=[int2str(uint16(Tr(index,2)/PixelSize)), '-', int2str(uint16(Tr(index,3)/PixelSize))];
@@ -369,7 +438,6 @@ while k ~= 4 %4 menu options, and the last option closes
               end
               
               if k ==4, break; end
-             
          end
     end
     if l == 1, k = 4; end
@@ -401,7 +469,7 @@ for i = 1:(length(x)-1)
         d = 1;
     end
         
-        xx = [xx (x(i)+d):d:x(i+1)]; %#ok<AGROW>
+        xx = [xx (x(i)+d):d:x(i+1)];
 end
 yy = spline(x,y,xx);
 
@@ -448,7 +516,7 @@ while k<length(xx)
 end
 done = false; dum = false; i = 2;
 while done ~= true
-    dum = [dum r(i)>0.95]; %#ok<AGROW>
+    dum = [dum r(i)>0.95];
     if (r(i)>0.95 && r(i+1)<0.95 && r(i+2)<0.95), done=true; end
     i=i+1;
 end
