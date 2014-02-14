@@ -26,21 +26,24 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -movement prediction
     -fix tracing for inturrupted readings
     -take all except
-    -mark selected traces
 %}
 if nargin == 2
     windowsize = 5; filter = 'a';
 elseif nargin == 3
     windowsize = varargin{1}; filter = 'a';
 elseif nargin == 4
-    windowsize = varargin{1}; filter = varargin{2};
+    if (ischar(varargin{2}) && (varargin{2} ~= 'a' && varargin{2} ~= 'm'))
+        error('Fourth argument must be ''a'', ''m'', or a number.')
+    else
+        windowsize = varargin{1}; filter = varargin{2};
+    end
 else
     error('Too many input arguments');
 end
 
 windowsize = 2*floor((windowsize+1)/2) - 1;
 PixelSize = 160; % nm
-mex = -fspecial('log',13,1.5);
+mex = -fspecial('log',9,1.5);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
 s = size(ss);
@@ -106,7 +109,7 @@ if filter == 'm'
     end
 end
 
-if (filter ~= 'm' || filter ~= 'a')
+if (filter ~= 'm' && filter ~= 'a')
     for k = 1:frames
         scale(k) = filter;
     end
@@ -119,7 +122,7 @@ h = waitbar(0,'Isolating CCPs...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for k =1:frames
-    BW(:,:,k) = imregionalmax(J(:,:,k)/scale(k), 8);
+    BW(:,:,k) = imregionalmax(floor(double(J(:,:,k))/scale(k)), 8);
     waitbar(k / frames)
 end
 close(h);
@@ -230,9 +233,9 @@ TraceX = zeros(Boy,frames);
 TraceY = zeros(Boy,frames);
 TraceINT = zeros(Boy,frames);
 
-p=0;                          %trace number
-dt = uint8((windowsize+1)/2); %distance threshold
-ft = uint8(5);                %frame threshold (needs statistical definition)
+p = 0;                          %trace number
+dt = (windowsize+1)/2; %distance threshold
+ft = 9;                %frame threshold (needs statistical definition)
 
 h = waitbar(0,'Creating traces...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
@@ -249,7 +252,7 @@ for k=1:frames-1
         check=zeros([1,frames],'uint16');
         dum_x = X(m,k);
         dum_y = Y(m,k);
-        
+
         l = k;
         check(l) = m;
         while l <= frames - 1
@@ -258,10 +261,12 @@ for k=1:frames-1
             for n=1:Boy
                 dif(n)=sqrt((dum_x-X(n,l+1))^2+(dum_y-Y(n,l+1))^2);
             end
+
             check(l+1) = find(dif==min(dif));
             for n=1:Boy
                 check_dif(n)=sqrt((X(check(l+1),l+1)-X(n,l))^2+(Y(check(l+1),l+1)-Y(n,l))^2);
             end
+
             if (find(check_dif==min(check_dif)) ~= check(l) || dif(check(l+1))>dt)
                 check(l+1) = 0;
             else
@@ -339,7 +344,7 @@ if l == 2
 end
 Tx = 0;
 Ty = 0;
-k = uint8(0);
+k = 0;
 while k ~= 4 %4 menu options, and the last option closes
     if l == 2, [Tx,Ty] = ginput(1); end %click on a trace to see it in more detail
     for m=1:Boy2
@@ -443,7 +448,6 @@ while k ~= 4 %4 menu options, and the last option closes
     if l == 1, k = 4; end
 end
 close;
-save('test.mat');
 end
 
 function [ x, y ] = create_histogram (J)
