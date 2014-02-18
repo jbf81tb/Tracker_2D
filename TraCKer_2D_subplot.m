@@ -26,6 +26,7 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -movement prediction
     -fix tracing for inturrupted readings
     -take all except
+1
 %}
 if nargin == 2
     windowsize = 5; filter = 'a';
@@ -61,7 +62,7 @@ for j=1:frames
         [x,y] = create_histogram(J(:,:,j));
         scale(j) = best_fit_approx_n(x,y,5);
     end
-    waitbar(j / frames)
+    waitbar(j / frames);
 end
 close(h);
 
@@ -232,8 +233,9 @@ end
 TraceX = zeros(Boy,frames);
 TraceY = zeros(Boy,frames);
 TraceINT = zeros(Boy,frames);
+Diffs = zeros(Boy,Boy,frames-1);
 
-p = 0;                          %trace number
+p = 0;                 %trace number
 dt = (windowsize+1)/2; %distance threshold
 ft = 9;                %frame threshold (needs statistical definition)
 
@@ -261,6 +263,7 @@ for k=1:frames-1
             for n=1:Boy
                 dif(n)=sqrt((dum_x-X(n,l+1))^2+(dum_y-Y(n,l+1))^2);
             end
+            Diffs(m,:,k) = dif;
 
             check(l+1) = find(dif==min(dif));
             for n=1:Boy
@@ -347,6 +350,11 @@ Ty = 0;
 k = 0;
 while k ~= 4 %4 menu options, and the last option closes
     if l == 2, [Tx,Ty] = ginput(1); end %click on a trace to see it in more detail
+    if l == 1
+        h = waitbar(0,'Saving traces...');
+        bar_color_patch_handle = findobj(h,'Type','Patch');
+        set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
+    end
     for m=1:Boy2
         MeanX=mean(TraceX(m,TraceX(m,:)>0));
         MeanY=mean(TraceY(m,TraceY(m,:)>0));
@@ -355,10 +363,16 @@ while k ~= 4 %4 menu options, and the last option closes
              if l == 2
                 j=6-mod(m,6);
                 TX=TraceX(m,T);
-                TY=TraceY(m,T);
+                TY=s(1)-TraceY(m,T);
+                for i=1:length(TX)-1
+                    u(i) = TX(i+1)-TX(i);
+                    v(i) = TY(i+1)-TY(i);
+                end
+                TX = TX(1:length(u));
+                TY = TY(1:length(v));
                 %here we plot the x-y details of the CCP
                 subplot(2,2,2);
-                plot(TX,s(1)-TY,colors(j),'LineWidth',3);
+                quiver(TX,TY,u,v,0,colors(j),'LineWidth',2);
                 %here we plot intensity data of what we know to be a CCP
                 subplot(2,2,4);
                 plot(find(TraceINT(m,:)>0),TraceINT(m,TraceINT(m,:)>0),'bo','LineWidth',3);
@@ -444,10 +458,12 @@ while k ~= 4 %4 menu options, and the last option closes
               
               if k ==4, break; end
          end
+         if l == 1, waitbar(m/Boy2); end
     end
-    if l == 1, k = 4; end
+    if l == 1, close(h); k = 4; end
 end
 close;
+save('distance.mat','Diffs');
 end
 
 function [ x, y ] = create_histogram (J)
