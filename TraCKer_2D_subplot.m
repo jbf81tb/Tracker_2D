@@ -26,7 +26,9 @@ Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
     -movement prediction
     -fix tracing for inturrupted readings
     -take all except
-1
+    -fix automatic fitting
+-cursor position
+-select a rectangle
 %}
 if nargin == 2
     windowsize = 5; filter = 'a';
@@ -43,6 +45,7 @@ else
 end
 
 windowsize = 2*floor((windowsize+1)/2) - 1;
+bigwindowsize = windowsize + 4;
 PixelSize = 160; % nm
 mex = -fspecial('log',9,1.5);
 %Predefine matrices. J is dynamic, IMG is static.
@@ -57,7 +60,7 @@ bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for j=1:frames
     IMG(:,:,j) = imread(filename,'Index',j);
-    J(:,:,j) = imfilter(IMG(:,:,j),mex,'symmetric');
+    J(:,:,j) = imfilter(IMG(:,:,j),mex);
     if filter == 'a'
         [x,y] = create_histogram(J(:,:,j));
         scale(j) = best_fit_approx_n(x,y,5);
@@ -127,7 +130,6 @@ for k =1:frames
     waitbar(k / frames)
 end
 close(h);
-
 %Predefine matrices for tracking CCPs. BACK and INT have arbitrary
 %predefinition (will usually be too small).
 B_sample = bwboundaries(BW(:,:,2),'noholes');
@@ -148,34 +150,22 @@ c=cell2mat(B(m));
 Py=uint16(mean(c(:,1)));
 Px=uint16(mean(c(:,2)));
 
-bigwindowsize = windowsize + 4;
-if (Px-(bigwindowsize+1)/2)<1
-    Px=(bigwindowsize+1)/2;
-end
-if (Py-(bigwindowsize+1)/2)<1
-    Py=(bigwindowsize+1)/2;
-end
-if (Px+(bigwindowsize+1)/2)>s(2)
-    Px=s(2)-(bigwindowsize+1)/2;
-end
-if (Py+(bigwindowsize+1)/2)>s(1)
-    Py=s(1)-(bigwindowsize+1)/2;
-end
-
-%DEFINE Window
-Window = zeros(windowsize,windowsize);
-for i=1:windowsize
-    for j=1:windowsize
-    Window(i,j)=IMG(Py-(windowsize+1)/2+i,Px-(windowsize+1)/2+j,k);
-    end 
-end
-
-%DEFINE Big Window
-BigWindow = zeros(bigwindowsize,bigwindowsize);
-for i=1:bigwindowsize
-    for j=1:bigwindowsize
-    BigWindow(i,j)=IMG(Py-(bigwindowsize+1)/2+i,Px-(bigwindowsize+1)/2+j,k);
-    end 
+if (Px-(bigwindowsize+1)/2)<1 || (Py-(bigwindowsize+1)/2)<1 || (Px+(bigwindowsize+1)/2)>s(2) || (Py+(bigwindowsize+1)/2)>s(1)
+    [Window, BigWindow] = make_windows(Px,Py,windowsize,s,IMG(:,:,k));
+else
+    Window = zeros(windowsize,windowsize);
+    for i=1:windowsize
+        for j=1:windowsize
+        Window(i,j)=IMG(Py-(windowsize+1)/2+i,Px-(windowsize+1)/2+j,k);
+        end 
+    end
+    
+    BigWindow = zeros(bigwindowsize,bigwindowsize);
+    for i=1:bigwindowsize
+        for j=1:bigwindowsize
+        BigWindow(i,j)=IMG(Py-(bigwindowsize+1)/2+i,Px-(bigwindowsize+1)/2+j,k);
+        end 
+    end
 end
 
 %Each particle is assigned a background intensity.
@@ -183,7 +173,7 @@ BACKmean=[min(mean(BigWindow,1)),min(mean(BigWindow,2))];
 BACK(q,k)=min(BACKmean);
 
 %FIND Total Intensity
-INT(q,k)=sum(sum(Window))-BACK(q,k)*(windowsize)^2;
+INT(q,k)=(mean(Window(:))-BACK(q,k))*(windowsize)^2;
 
 TopX=zeros(windowsize,1);
 TopY=zeros(windowsize,1);
@@ -191,23 +181,23 @@ WSumX=0;
 WSumY=0;
 
 %Finding the center of intensity
-for j=1:windowsize
+for j=1:size(Window,2)
    TopX(j)=sum(Window(:,j));
 end
 TopX=TopX-min(TopX);
 TopRow=sum(TopX);
 
-for j=1:windowsize
+for j=1:size(Window,2)
     WSumX=WSumX+j*TopX(j);
 end
 
-for i=1:windowsize
+for i=1:size(Window,1)
    TopY(i)=sum(Window(i,:));
 end
 TopY=TopY-min(TopY);
 TopColum=sum(TopY);
 
-for i=1:windowsize
+for i=1:size(Window,1)
     WSumY=WSumY+i*TopY(i);
 end
 
@@ -323,44 +313,65 @@ end
 close(h);
 
 [Boy2,~]=size(TraceX); %Boy2 is the number of traces.
+
 %Makes a directory for csv files. If you have Excel, comment this out and
 %use a single xls file with sheets. see line 395
-foldername = sprintf('%s_%u',filename(1:length(filename)-4),max(scale));
-mkdir(foldername);
+foldername = sprintf('%s_%u',filename(1:length(filename)-4),min(scale));
+a = ls;
+a = [a blanks(size(a,1))'];
+a = a';
+a = a(:);
+name = regexp(a',strcat(foldername,'o*'),'match');
+if ~isempty(name)
+   foldername = strcat(name{length(name)},'o');
+end
+ mkdir(foldername);
 %trace_filename=[filename, '.xls'];
 
+bad_ones = false(1,Boy2);
 l = menu('Would you like to...','Save all traces?','Manually choose a few?');
-
+Tx = 0; Ty = 0; 
 if l == 2
-    h = msgbox('Creating image...'); %function modified from msgbox
-        subplot(2,2,[1 3])
-        imshow(-MEAN,[]);
-        hold;
+    h = msgbox('Creating image...');
+        subplot(4,4,[1,15])
+        imh = imshow(-MEAN,[]);
+        axh = get(imh,'Parent');
+        figh = get(axh,'Parent');
+        set(figh,'WindowButtonMotionFcn',@wbmcb,...
+            'Pointer','fullcross');
+        IMDATA = get(imh,'CData');
+        hold on;
     colors='brgycm';
     for i=1:Boy2
     j=6-mod(i,6);
-    subplot(2,2,[1 3]) %make a big plot of all traces overlaying mean image
+    subplot(4,4,[1,15]) %make a big plot of all traces overlaying mean image
     plot(TraceX(i,TraceX(i,:)>0), TraceY(i,TraceY(i,:)>0), colors(j), 'linewidth', 2);
-    hold on;
     end
+    ptext = text('string','','VerticalAlignment','bottom');
     close(h)
 end
-Tx = 0;
-Ty = 0;
 k = 0;
 while k ~= 4 %4 menu options, and the last option closes
-    if l == 2, [Tx,Ty] = ginput(1); end %click on a trace to see it in more detail
+    k=0;
+    if l == 2
+        k = 2;
+        while(k~=0)
+            k=waitforbuttonpress;
+        end
+    end %click on a trace to see it in more detail
     if l == 1
         h = waitbar(0,'Saving traces...');
         bar_color_patch_handle = findobj(h,'Type','Patch');
         set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
     end
     for m=1:Boy2
+        if (l == 1 && bad_ones(m)), continue; end
         MeanX=mean(TraceX(m,TraceX(m,:)>0));
         MeanY=mean(TraceY(m,TraceY(m,:)>0));
          if (sqrt((MeanX-Tx)^2+(MeanY-Ty)^2)<windowsize || l == 1)
              T=find(TraceX(m,:));
              if l == 2
+                u=0;v=0;
                 j=6-mod(m,6);
                 TX=TraceX(m,T);
                 TY=s(1)-TraceY(m,T);
@@ -371,12 +382,12 @@ while k ~= 4 %4 menu options, and the last option closes
                 TX = TX(1:length(u));
                 TY = TY(1:length(v));
                 %here we plot the x-y details of the CCP
-                subplot(2,2,2);
+                subplot(4,4,[4,8]);
                 quiver(TX,TY,u,v,0,colors(j),'LineWidth',2);
                 %here we plot intensity data of what we know to be a CCP
-                subplot(2,2,4);
+                subplot(4,4,[12,16]);
                 plot(find(TraceINT(m,:)>0),TraceINT(m,TraceINT(m,:)>0),'bo','LineWidth',3);
-                hold;
+                hold on;
              end
              %we have, however, left out all the stuff between what we know
              %is a CCP, so to do that we use the for loop below to add in
@@ -427,14 +438,15 @@ while k ~= 4 %4 menu options, and the last option closes
              end
          if l == 2    
              %finish the plot
-             subplot(2,2,4);
+             subplot(4,4,[12,16]);
              plot(TraceINT(m,:),'r','LineWidth',3);
-             hold;
-             subplot(2,2,[1 3]);
+             hold off;
+             subplot(4,4,[1 15]);
              plot(TraceX(m,TraceX(m,:)>0), TraceY(m,TraceY(m,:)>0), 'k', 'linewidth', 2);
   
-             k = menu('Do you want to keep this?','Yes and Continue','No and Continue','Yes and Quit','No and Quit') ;
-         end    
+             k = menu('Do you want to keep this?','Yes and Continue','No and Continue','Yes and Quit','No and Quit','Save All Except');
+             if k == 2, bad_ones(m) = true; end
+         end
              %if the CCP is good then throw that data into a file or a sheet
               if ((k == 1 || k == 3) || l == 1)
                   Tr=NaN(frames,4);
@@ -448,7 +460,12 @@ while k ~= 4 %4 menu options, and the last option closes
                   
                   %below is code to write to a folder of csv's, or an xls
                   %file with multiple sheets. see line 283
-                  trace_filename = [int2str(uint16(Tr(indexf,1))), '_', int2str(uint16(Tr(indexf,2)/PixelSize)), 'x', int2str(uint16(Tr(indexf,3)/PixelSize)), 'y', '_to_',int2str(uint16(Tr(indexl,2)/PixelSize)), 'x', int2str(uint16(Tr(indexl,3)/PixelSize)), 'y'];
+                  trace_filename = [int2str(uint16(Tr(indexf,1))), '_',...
+                                    int2str(uint16(Tr(indexf,2)/PixelSize)), 'x',...
+                                    int2str(uint16(Tr(indexf,3)/PixelSize)), 'y',...
+                                    '_to_',...
+                                    int2str(uint16(Tr(indexl,2)/PixelSize)), 'x',...
+                                    int2str(uint16(Tr(indexl,3)/PixelSize)), 'y'];
                   trace_path = sprintf('%s\\%s.csv',foldername,trace_filename);
                   csvwrite(trace_path,Tr);
                   %sheetname=[int2str(uint16(Tr(index,2)/PixelSize)), '-', int2str(uint16(Tr(index,3)/PixelSize))];
@@ -456,15 +473,28 @@ while k ~= 4 %4 menu options, and the last option closes
                   if k == 3, k=4; break; end
               end
               
-              if k ==4, break; end
+              if k == 4, break; end
          end
          if l == 1, waitbar(m/Boy2); end
+         if k == 5, l = 1; break; end
     end
-    if l == 1, close(h); k = 4; end
+    if (l == 1 && m == Boy2), k = 4; end
 end
+if l == 1, close(h); end
 close;
-save('distance.mat','Diffs');
+    function wbmcb(src,evnt) %#ok<INUSD>
+        cp = get(axh,'CurrentPoint');
+        xpos = round(cp(1,1));
+        ypos = round(cp(1,2));
+        if(xpos>=1 && xpos<=size(IMDATA,2) && ypos>=1 && ypos<=size(IMDATA,1))
+            set(ptext,'string',sprintf('(%u,%u)',ypos,xpos),'Position',[cp(1,1),cp(1,2)]);
+            Tx = xpos;
+            Ty = ypos;
+        end
+    end
 end
+
+
 
 function [ x, y ] = create_histogram (J)
 %Creating a log-scaled histogram of image intensities.
@@ -518,11 +548,15 @@ while k<length(xx)
     else
         sx = sqrt((xsum2-xsum^2/w)/(w-1));
         sy = sqrt((ysum2-ysum^2/w)/(w-1));
-        m(i) = (w*xysum - xsum*ysum)/(w*xsum2-xsum^2);
-        b = (ysum - m(i)*xsum)/w;
-        new_y(i) = m(i)*xx(k)+b;
-        x_int(i) = -b/m(i);
-        r(i) = ((xysum-xsum*ysum/w)/((w-1)*sx*sy))^2;
+        if sx==0 || sy ==0
+            m(i)=0;new_y(i)=0;x_int(i)=0;r(i)=0;
+        else
+            m(i) = (w*xysum - xsum*ysum)/(w*xsum2-xsum^2);
+            b = (ysum - m(i)*xsum)/w;
+            new_y(i) = m(i)*xx(k)+b;
+            x_int(i) = -b/m(i);
+            r(i) = ((xysum-xsum*ysum/w)/((w-1)*sx*sy))^2;
+        end
     end
     
     if i < n
@@ -534,11 +568,124 @@ while k<length(xx)
     end
     i=i+1;    
 end
-done = false; dum = false; i = 2;
-while done ~= true
-    dum = [dum r(i)>0.95];
-    if (r(i)>0.95 && r(i+1)<0.95 && r(i+2)<0.95), done=true; end
-    i=i+1;
+
+dum = r>0.9;
+for i = 1:length(dum)
+   if (dum(i) == true && (x_int(i) > median(x_int(dum))+std(x_int(dum)) || x_int(i) < median(x_int(dum))-std(x_int(dum))))
+       dum(i) = false;
+   end
 end
-scale = ceil(mean(x_int(dum)));
+scale = floor(mean(x_int(dum)));
+end
+
+function [Window, BigWindow] = make_windows(Px,Py,windowsize,s,IMG)
+bigwindowsize = windowsize + 4;
+Window = 0; BigWindow = 0;
+
+if (Px-(bigwindowsize+1)/2)<1 && (Py-(bigwindowsize+1)/2)<1
+        for i=1:(windowsize-1)/2-Py
+          for j=1:(windowsize-1)/2-Px
+          Window(i,j)=IMG(i,j);
+          end 
+        end
+
+        for i=1:(bigwindowsize-1)/2-Py
+          for j=1:(bigwindowsize-1)/2-Px
+          BigWindow(i,j)=IMG(i,j);
+          end 
+        end
+    
+elseif (Px-(bigwindowsize+1)/2)<1 && (Py+(bigwindowsize+1)/2)>s(1)
+       for i=(Py-(windowsize-1)/2):s(1)
+          for j=1:(windowsize-1)/2-Px
+          Window(i+1-(Py-(windowsize-1)/2),j)=IMG(i,j);
+          end 
+        end
+
+        for i=(Py-(bigwindowsize-1)/2):s(1)
+          for j=1:(bigwindowsize-1)/2-Px
+          BigWindow(i+1-(Py-(bigwindowsize-1)/2),j)=IMG(i,j);
+          end 
+        end
+
+
+
+elseif (Px+(bigwindowsize+1)/2)>s(2) && (Py-(bigwindowsize+1)/2)<1
+        for i=1:(windowsize-1)/2-Py
+          for j=(Px-(windowsize-1)/2):s(2)
+          Window(i,j+1-(Px-(windowsize-1)/2))=IMG(i,j);
+          end 
+        end
+
+        for i=1:(bigwindowsize-1)/2-Py
+          for j=(Px-(bigwindowsize-1)/2):s(2)
+          BigWindow(i,j+1-(Px-(bigwindowsize-1)/2))=IMG(i,j);
+          end 
+        end
+
+elseif (Px+(bigwindowsize+1)/2)>s(2) && (Py+(bigwindowsize+1)/2)>s(1)
+       for i=(Py-(windowsize-1)/2):s(1)
+          for j=(Px-(windowsize-1)/2):s(2)
+          Window(i+1-(Py-(windowsize-1)/2),j+1-(Px-(windowsize-1)/2))=IMG(i,j);
+          end 
+        end
+
+        for i=(Py-(bigwindowsize-1)/2):s(1)
+          for j=(Px-(bigwindowsize-1)/2):s(2)
+          BigWindow(i+1-(Py-(bigwindowsize-1)/2),j+1-(Px-(bigwindowsize-1)/2))=IMG(i,j);
+          end 
+        end
+        
+elseif (Px-(bigwindowsize+1)/2)<1 && (Py-(bigwindowsize+1)/2)>=1 && (Py+(bigwindowsize+1)/2)<=s(1)
+        for i=1:windowsize
+          for j=1:(windowsize-1)/2-Px
+          Window(i,j)=IMG(Py-(windowsize+1)/2+i,j);
+          end 
+        end
+
+        for i=1:bigwindowsize
+          for j=1:(bigwindowsize-1)/2-Px
+          BigWindow(i,j)=IMG(Py-(bigwindowsize+1)/2+i,j);
+          end 
+        end
+        
+elseif (Px+(bigwindowsize+1)/2)>s(2) && (Py-(bigwindowsize+1)/2)>=1 && (Py+(bigwindowsize+1)/2)<=s(1)
+        for i=1:windowsize
+          for j=(Px-(windowsize-1)/2):s(2)
+          Window(i,j+1-(Px-(windowsize-1)/2))=IMG(Py-(windowsize+1)/2+i,j);
+          end 
+        end
+
+        for i=1:bigwindowsize
+          for j=(Px-(bigwindowsize-1)/2):s(2)
+          BigWindow(i,j+1-(Px-(bigwindowsize-1)/2))=IMG(Py-(bigwindowsize+1)/2+i,j);
+          end 
+        end
+        
+elseif (Py-(bigwindowsize+1)/2)<1 && (Px-(bigwindowsize+1)/2)>=1 && (Px+(bigwindowsize+1)/2)<=s(2)
+        for i=1:(windowsize-1)/2-Py
+          for j=1:windowsize
+          Window(i,j)=IMG(i,Px-(windowsize+1)/2+j);
+          end 
+        end
+
+        for i=1:(bigwindowsize-1)/2-Py
+          for j=1:bigwindowsize
+          BigWindow(i,j)=IMG(i,Px-(bigwindowsize+1)/2+j);
+          end 
+        end
+        
+elseif (Py+(bigwindowsize+1)/2)>s(1) && (Px-(bigwindowsize+1)/2)>=1 && (Px+(bigwindowsize+1)/2)<=s(2)
+        for i=(Py-(windowsize-1)/2):s(1)
+          for j=1:windowsize
+          Window(i+1-(Py-(windowsize-1)/2),j)=IMG(i,Px-(windowsize+1)/2+j);
+          end 
+        end
+
+        for i=(Py-(bigwindowsize-1)/2):s(1)
+          for j=1:bigwindowsize
+          BigWindow(i+1-(Py-(bigwindowsize-1)/2),j)=IMG(i,Px-(bigwindowsize+1)/2+j);
+          end 
+        end
+end
 end
