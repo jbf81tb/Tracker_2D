@@ -7,22 +7,17 @@ frames is the number of frames in the tiff file.
 windowsize is the width of the analysis window.
 
 Version 0.0 created by Comert Kural (kural.1@osu.edu)
-Version 1.1 by Josh Ferguson (ferguson.621@osu.edu)
-    -changed from a script to a function
-    -added comments
-    -added waitbars
-    -improved menus
-        >added close feature
-    -cleaned up matlab warnings
-        >prealocating arrays
-        >cleaned up redundant variables
-    -added 'save all' feature
-    -allowed option for csv writing instead of xls
-    -began development branch in Git
-    -all future changes will be recorded with Git
+All further versions by Josh Ferguson (ferguson.621@osu.edu)
  TO DO
     -statistical slection of frame threshold
+        - I think this can only be done for a given cell type under certain
+        experimental conditions. The analysis must be run with an infinite
+        frame threshold to determine what the the distribution of widths
+        between peaks is. It would be a little time consuming and amounts
+        to just a bit of fine tuning. I think it's ok just to use tight
+        requirements.
     -domain analysis
+        - What defines a subdomain?
     -movement prediction
     -fix tracing for inturrupted readings
     -take all except
@@ -227,7 +222,7 @@ Diffs = zeros(Boy,Boy,frames-1);
 
 p = 0;                 %trace number
 dt = (windowsize+1)/2; %distance threshold
-ft = 9;                %frame threshold (needs statistical definition)
+ft = 5;                %frame threshold (needs statistical definition)
 
 h = waitbar(0,'Creating traces...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
@@ -265,13 +260,13 @@ for k=1:frames-1
             else
                 dum_x = X(check(l+1),l+1); dum_y = Y(check(l+1),l+1);
             end
-                if (l-k)>ft
-                        %sets a frame threshold, where if we recieve no
-                        %signal from this area, constrained by the distance
-                        %threshold, for ft frames then it could just be a
-                        %new particle taking its place in the same region
-                        if sum(check(l-ft:l)) == 0, break, end
-                end
+            if (l-k)>ft
+                    %sets a frame threshold, where if we recieve no
+                    %signal from this area, constrained by the distance
+                    %threshold, for ft frames then it could just be a
+                    %new particle taking its place in the same region
+                    if sum(check(l-ft:l)) == 0, break, end
+            end
             l = l+1;
         end
         
@@ -314,8 +309,6 @@ close(h);
 
 [Boy2,~]=size(TraceX); %Boy2 is the number of traces.
 
-%Makes a directory for csv files. If you have Excel, comment this out and
-%use a single xls file with sheets. see line 395
 foldername = sprintf('%s_%u',filename(1:length(filename)-4),min(scale));
 a = ls;
 a = [a blanks(size(a,1))'];
@@ -326,7 +319,7 @@ if ~isempty(name)
    foldername = strcat(name{length(name)},'o');
 end
  mkdir(foldername);
-%trace_filename=[filename, '.xls'];
+ %The above allows you to save the same run but with different scales.
 
 bad_ones = false(1,Boy2);
 l = menu('Would you like to...','Save all traces?','Manually choose a few?');
@@ -458,8 +451,6 @@ while k ~= 4 %4 menu options, and the last option closes
                   indexf=find(TraceX(m,:)>0, 1, 'first' );
                   indexl=find(TraceX(m,:)>0, 1, 'last' );
                   
-                  %below is code to write to a folder of csv's, or an xls
-                  %file with multiple sheets. see line 283
                   trace_filename = [int2str(uint16(Tr(indexf,1))), '_',...
                                     int2str(uint16(Tr(indexf,2)/PixelSize)), 'x',...
                                     int2str(uint16(Tr(indexf,3)/PixelSize)), 'y',...
@@ -468,8 +459,6 @@ while k ~= 4 %4 menu options, and the last option closes
                                     int2str(uint16(Tr(indexl,3)/PixelSize)), 'y'];
                   trace_path = sprintf('%s\\%s.csv',foldername,trace_filename);
                   csvwrite(trace_path,Tr);
-                  %sheetname=[int2str(uint16(Tr(index,2)/PixelSize)), '-', int2str(uint16(Tr(index,3)/PixelSize))];
-                  %xlswrite(trace_filename, Tr, sheetname);
                   if k == 3, k=4; break; end
               end
               
