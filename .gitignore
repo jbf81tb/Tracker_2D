@@ -1,6 +1,10 @@
-*.mat
 *.asv
 *.tif
-*.m
-!TraCKer_2D_subplot.m
-*/
+*.mat
+*.csv
+*.ods
+*.txt
+*.fig
+*.xls
+*.zip
+*.db

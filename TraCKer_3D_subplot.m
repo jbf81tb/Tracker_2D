@@ -1,4 +1,4 @@
-function TraCKer_2D_subplot(filename,frames, varargin)
+function TraCKer_3D_subplot(filename,frames,varargin)
 %Particle Tracker: Input filename, frames, and window size to get tracking.
 %{
 filname is the name of the tiff file (with extension) that you want to
@@ -24,41 +24,40 @@ All further versions by Josh Ferguson (ferguson.621@osu.edu)
     -fix automatic fitting
 -cursor position
 -select a rectangle
+-folder containing stacks must have the name of the name of the maximum
+projection (if it is .tif, then just the name. If it is .tiff, then it must
+have a period at the end. (I remove the last 4 characters.))
 %}
-if nargin == 2
-    windowsize = 5; filter = 'a';
+if nargin < 2
+    error('Must give filename and # of frames');
+elseif nargin == 2
+    zstacks = 1; windowsize = 5; filter = 'a';
 elseif nargin == 3
-    windowsize = varargin{1}; filter = 'a';
+    zstacks = varargin{1}; windowsize = 5; filter = 'a';
 elseif nargin == 4
-    if (ischar(varargin{2}) && (varargin{2} ~= 'a' && varargin{2} ~= 'm'))
+    zstacks = varargin{1}; windowsize = varargin{2}; filter = 'a';
+elseif nargin == 5
+    if (ischar(varargin{3}) && (varargin{3} ~= 'a' && varargin{3} ~= 'm'))
         error('Fourth argument must be ''a'', ''m'', or a number.')
     else
-        windowsize = varargin{1}; filter = varargin{2};
+        zstacks = varargin{1}; windowsize = varargin{2}; filter = varargin{3};
     end
 else
     error('Too many input arguments');
 end
-
-if windowsize == 5
-    mask = [0 1 1 1 0;...
-            1 1 1 1 1;...
-            1 1 1 1 1;...
-            1 1 1 1 1;...
-            0 1 1 1 0];
-elseif windowsize == 7
-    mask = [0 0 1 1 1 0 0;...
-            0 1 1 1 1 1 0;...
-            1 1 1 1 1 1 1;...
-            1 1 1 1 1 1 1;...
-            1 1 1 1 1 1 1;...
-            0 1 1 1 1 1 0;...
-            0 0 1 1 1 0 0;];
-else
-    mask = ones(windowsize);
-end
 windowsize = 2*floor((windowsize+1)/2) - 1;
+mask = zeros(windowsize);
+for i = 1:windowsize
+    for j = 1:windowsize
+        if (i-.5-windowsize/2)^2 + (j-.5-windowsize/2)^2 < (windowsize/2)^2
+            mask(i,j) = 1;
+        end
+    end
+end
+
 bigwindowsize = windowsize + 4;
 PixelSize = 160; % nm
+PlaneDist = 300*0.7; %nm (the 0.7 is a correction factor)
 mex = -fspecial('log',9,1.5);
 %Predefine matrices. J is dynamic, IMG is static.
 ss = imread(filename);
@@ -83,7 +82,7 @@ close(h);
 
 MEAN=mean(J,3);
 if filter == 'm'
-    SHOW = J(:,:,2);
+    SHOW = J(:,:,ceil(size(J,3)/3));
     Scale=(min(SHOW(:)):max(SHOW(:)))';
     figure('units','normalized','outerposition',[0 0 1 1]);
     colormap(gray);
@@ -131,13 +130,11 @@ if (filter ~= 'm' && filter ~= 'a')
         scale(k) = filter;
     end
 end
-
 for k = 1:frames
     J(:,:,k) = J(:,:,k)/scale(k);
     J(:,:,k) = im2bw(J(:,:,k),0);
     J(:,:,k) = double(J(:,:,k)).*IMG(:,:,k);
 end
-    
 %Predefine matrix containing binary information of pits.
 BW = zeros(s(1),s(2),frames);
 
@@ -145,7 +142,7 @@ h = waitbar(0,'Isolating CCPs...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
 set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
 for k =1:frames
-    BW(:,:,k) = imregionalmax(floor(J(:,:,k)), 8);
+    BW(:,:,k) = imregionalmax(floor(double(J(:,:,k))), 8);
     waitbar(k / frames)
 end
 close(h);
@@ -188,8 +185,7 @@ for k=1:frames
         end
         
         %Each particle is assigned a background intensity.
-        BACKmean=[min(mean(BigWindow,1)),min(mean(BigWindow,2))];
-        BACK(q,k)=min(BACKmean);
+        BACK(q,k)=min([min(mean(BigWindow,1)),min(mean(BigWindow,2))]);
         
         %FIND Total Intensity
         INT(q,k)=(sum(Window(:))/sum(mask(:))-BACK(q,k))*(windowsize)^2;
@@ -227,10 +223,51 @@ for k=1:frames
         X(q,k)=double(Px)+Xc(k)-double((windowsize+1)/2); %#ok<*AGROW>
         Y(q,k)=double(Py)+Yc(k)-double((windowsize+1)/2);
         
+        if(zstacks~=1)
+            % Find Z position
+            for l=1:zstacks
+                if strcmp(filename(end-3:end),'tiff')
+                    stackfiles = dir([filename(1:end-5) '\*.tif*']);
+                elseif strcmp(filename(end-2:end),'tif')
+                    stackfiles = dir([filename(1:end-4) '\*.tif*']);
+                end
+                stack=double(imread(stackfiles(k).name,l));
+                
+                if (Px-(bigwindowsize+1)/2)<1 || (Py-(bigwindowsize+1)/2)<1 || (Px+(bigwindowsize+1)/2)>s(2) || (Py+(bigwindowsize+1)/2)>s(1)
+                    [ZWindow, BigZWindow] = make_windows(Px,Py,windowsize,s,stack);
+                else
+                    ZWindow = zeros(windowsize,windowsize);
+                    for i=1:windowsize
+                        for j=1:windowsize
+                            ZWindow(i,j)=stack(Py-(windowsize+1)/2+i,Px-(windowsize+1)/2+j);
+                        end
+                    end
+                    
+                    BigZWindow = zeros(bigwindowsize,bigwindowsize);
+                    for i=1:bigwindowsize
+                        for j=1:bigwindowsize
+                            BigZWindow(i,j)=stack(Py-(bigwindowsize+1)/2+i,Px-(bigwindowsize+1)/2+j);
+                        end
+                    end
+                end
+                
+                %Each particle is assigned a background intensity.
+                BACKZ(l)=min([min(mean(BigZWindow,1)),min(mean(BigZWindow,2))]);
+                
+                %FIND Total Intensity
+                TopZr(l)=sum(sum(ZWindow-BACKZ(l)));
+            end
+            TopZ=TopZr-min(TopZr);
+            Z(q,k)=sum((1:zstacks).*TopZ)/sum(TopZ);
+        else
+            Z(q,k) = 1;
+        end
     end
     waitbar(k / frames)
 end
 close(h)
+
+
 
 [Boy,~]=size(X);
 for j = 1:frames
@@ -241,12 +278,13 @@ for j = 1:frames
 end
 TraceX = zeros(Boy,frames);
 TraceY = zeros(Boy,frames);
+TraceZ = zeros(Boy,frames);
 TraceINT = zeros(Boy,frames);
 Diffs = zeros(Boy,Boy,frames-1);
 
 p = 0;                 %trace number
 dt = (windowsize+1)/2; %distance threshold
-ft = 5;                %frame threshold (needs statistical definition)
+ft = 5;                %frame threshold (needs statistical/experimental definition)
 
 h = waitbar(0,'Creating traces...');
 bar_color_patch_handle = findobj(h,'Type','Patch');
@@ -256,6 +294,7 @@ for k=1:frames-1
         if (X(m,k)>0 && X(m,k)<s(2))
             tracex=zeros(1,frames);
             tracey=zeros(1,frames);
+            tracez=zeros(1,frames);
             traceint=zeros(1,frames);
             
             dif=Inf([1,Boy]);
@@ -296,12 +335,12 @@ for k=1:frames-1
             end
             
             
-            
             %Load temporary trace vectors with x, y, and intensity data.
             for l=k:frames
                 if check(l) ~= 0;
                     tracex(l)=X(check(l),l);
                     tracey(l)=Y(check(l),l);
+                    tracez(l)=Z(check(l),l);
                     traceint(l)=INT(check(l),l);
                     %Now that these points have appeared in a trace we
                     %have to make sure they no longer appear in any
@@ -324,6 +363,7 @@ for k=1:frames-1
                     p=p+1;
                     TraceX(p,:)=tracex;
                     TraceY(p,:)=tracey;
+                    TraceZ(p,:)=tracez;
                     TraceINT(p,:)=traceint;
                 end
             end
@@ -334,6 +374,43 @@ end
 close(h);
 
 [Boy2,~]=size(TraceX); %Boy2 is the number of traces.
+
+while 1
+    quit = true;
+    for i=1:Boy2-1
+        LastElement=find(TraceX(i,:)>0,1,'last');
+        if isempty(LastElement), continue; end
+        for j=i+1:Boy2
+            FirstElement=find(TraceX(j,:)>0,1,'first');
+            if isempty(FirstElement), continue; end
+            DifElement=FirstElement-LastElement;
+            if DifElement>-2 && DifElement<3
+                TraceDif=sqrt((TraceX(i,LastElement)-TraceX(j,FirstElement))^2+(TraceY(i,LastElement)-TraceY(j,FirstElement))^2);
+                if TraceDif < windowsize/sqrt(2)
+                    if DifElement<1
+                        for t=FirstElement:LastElement
+                            if TraceINT(i,t)>TraceINT(j,t)
+                                TraceINT(j,t)=0;TraceX(j,t)=0;TraceY(j,t)=0;
+                            else
+                                TraceINT(i,t)=0;TraceX(i,t)=0;TraceY(i,t)=0;
+                            end
+                        end
+                        quit = false;
+                    end
+                    
+                    
+                    TraceINT(i,:) = TraceINT(i,:).*(1-TraceX(j,:)>0)+TraceINT(j,:).*(1-TraceX(i,:)>0);
+                    TraceX(i,:) = TraceX(i,:)+TraceX(j,:);
+                    TraceY(i,:) = TraceY(i,:)+TraceY(j,:);
+                    TraceZ(i,:) = TraceZ(i,:)+TraceZ(j,:);
+                    TraceX(j,:) =-1; TraceY(j,:) =-1;% TraceZ(j,:) =0; TraceINT(j,:) =0;
+                    break
+                end
+            end
+        end
+    end
+    if quit, break; end
+end
 if strcmp(filename(end-3:end),'tiff')
     foldername = sprintf('%s_%u',filename(1:end-5),min(uint32(scale)));
 elseif strcmp(filename(end-2:end),'tif')
@@ -351,29 +428,30 @@ mkdir(foldername);
 %The above allows you to save the same run but with different scales.
 
 bad_ones = false(1,Boy2);
+colors = 'rmygcb';
 l = menu('Would you like to...','Save all traces?','Manually choose a few?');
 Tx = 0; Ty = 0;
 if l == 2
     h = msgbox('Creating image...');
-    subplot(4,4,[1,15])
-    imh = imshow(-MEAN,[]);
-    axh = get(imh,'Parent');
-    figh = get(axh,'Parent');
+    figh = figure('units','normalized','outerposition',[0 0 1 1]);
+    axh = subplot(3,5,[1 14]);
+    imshow((MEAN-min(MEAN(:)))/(max(MEAN(:))-min(MEAN(:))),[]);
+    alpha(.3);
     set(figh,'WindowButtonMotionFcn',@wbmcb,...
         'Pointer','fullcross');
-    IMDATA = get(imh,'CData');
+    colormap('jet')
     hold on;
-    colors='brgycm';
     for i=1:Boy2
-        j=6-mod(i,6);
-        subplot(4,4,[1,15]) %make a big plot of all traces overlaying mean image
-        plot(TraceX(i,TraceX(i,:)>0), TraceY(i,TraceX(i,:)>0), colors(j), 'linewidth', 2);
+        subplot(3,5,[1 14]) %make a big plot of all traces overlaying mean image
+        if size(TraceX(i,TraceX(i,:)>0),2) ~= 0
+            scatter(TraceX(i,TraceX(i,:)>0), TraceY(i,TraceX(i,:)>0), 10, TraceZ(i,TraceX(i,:)>0)/max(TraceZ(i,TraceX(i,:)>0)),'fill','MarkerEdgeColor','none');
+        end
     end
     ptext = text('string','','VerticalAlignment','bottom');
     close(h)
 end
 k = 0;
-while k ~= 4 %4 menu options, and the last option closes
+while k ~= 4 %4 menu options, option 4 closes
     k=0;
     if l == 2
         k = 2;
@@ -386,12 +464,11 @@ while k ~= 4 %4 menu options, and the last option closes
         bar_color_patch_handle = findobj(h,'Type','Patch');
         set(bar_color_patch_handle,'EdgeColor','b','FaceColor','b');
     end
-    clickx = Tx; clicky = Ty;
     for m=1:Boy2
         if (l == 1 && bad_ones(m)), continue; end
         MeanX=mean(TraceX(m,TraceX(m,:)>0));
-        MeanY=mean(TraceY(m,TraceX(m,:)>0));
-        if (sqrt((MeanX-clickx)^2+(MeanY-clicky)^2)<windowsize || l == 1) && ~bad_ones(m)
+        MeanY=mean(TraceY(m,TraceY(m,:)>0));
+        if (sqrt((MeanX-Tx)^2+(MeanY-Ty)^2)<windowsize || l == 1)
             T=find(TraceX(m,:));
             if l == 2
                 u=0;v=0;
@@ -405,10 +482,12 @@ while k ~= 4 %4 menu options, and the last option closes
                 TX = TX(1:length(u));
                 TY = TY(1:length(v));
                 %here we plot the x-y details of the CCP
-                subplot(4,4,[4,8]);
+                subplot(3,5,5);
                 quiver(TX,TY,u,v,0,colors(j),'LineWidth',2);
                 %here we plot intensity data of what we know to be a CCP
-                subplot(4,4,[12,16]);
+                subplot(3,5,10);
+                plot(find(TraceZ(m,:)>0),TraceZ(m,TraceZ(m,:)>0),'LineWidth',2);
+                subplot(3,5,15);
                 plot(find(TraceINT(m,:)>0),TraceINT(m,TraceINT(m,:)>0),'bo','LineWidth',3);
                 hold on;
             end
@@ -454,6 +533,7 @@ while k ~= 4 %4 menu options, and the last option closes
                             TraceINT(m,n)=INTIm;
                             TraceX(m,n)=NaN; %we're just looking at a window so it
                             TraceY(m,n)=NaN; %makes no sense to record position data
+                            TraceZ(m,n)=NaN;
                             
                         end
                     end
@@ -461,22 +541,23 @@ while k ~= 4 %4 menu options, and the last option closes
             end
             if l == 2
                 %finish the plot
-                subplot(4,4,[12,16]);
+                subplot(3,5,15);
                 plot(TraceINT(m,:),'r','LineWidth',3);
                 hold off;
-                subplot(4,4,[1 15]);
-                plot(TraceX(m,TraceX(m,:)>0), TraceY(m,TraceX(m,:)>0), 'k', 'linewidth', 2);
+                subplot(3,5,5);
+                plot(TraceX(m,TraceX(m,:)>0), TraceY(m,TraceY(m,:)>0), 'k', 'linewidth', 2);
                 
                 k = menu('Do you want to keep this?','Yes and Continue','No and Continue','Yes and Quit','No and Quit','Save All Except');
                 if k == 2, bad_ones(m) = true; end
             end
             %if the CCP is good then throw that data into a file or a sheet
             if ((k == 1 || k == 3) || l == 1)
-                Tr=NaN(frames,4);
+                Tr=NaN(frames,5);
                 Tr(:,1)=1:frames;   % Frame Num
                 Tr(:,2)=TraceX(m,:)*PixelSize;  % X
                 Tr(:,3)=TraceY(m,:)*PixelSize;  % Y
-                Tr(:,4)=TraceINT(m,:);  % INT
+                Tr(:,4)=TraceZ(m,:)*PlaneDist;  % Z
+                Tr(:,5)=TraceINT(m,:);  % INT
                 
                 indexf=find(TraceX(m,:)>0, 1, 'first' );
                 indexl=find(TraceX(m,:)>0, 1, 'last' );
@@ -484,9 +565,11 @@ while k ~= 4 %4 menu options, and the last option closes
                 trace_filename = [int2str(uint16(Tr(indexf,1))), '_',...
                     int2str(uint16(Tr(indexf,2)/PixelSize)), 'x',...
                     int2str(uint16(Tr(indexf,3)/PixelSize)), 'y',...
+                    int2str(uint16(Tr(indexf,4)/PlaneDist)), 'z',...
                     '_to_',...
                     int2str(uint16(Tr(indexl,2)/PixelSize)), 'x',...
-                    int2str(uint16(Tr(indexl,3)/PixelSize)), 'y'];
+                    int2str(uint16(Tr(indexl,3)/PixelSize)), 'y',...
+                    int2str(uint16(Tr(indexl,4)/PlaneDist)), 'z'];
                 trace_path = sprintf('%s\\%s.csv',foldername,trace_filename);
                 csvwrite(trace_path,Tr);
                 if k == 3, k=4; break; end
@@ -507,10 +590,10 @@ if size(stupid_dumb_folder_system,1) == 2, rmdir(foldername); end;
         cp = get(axh,'CurrentPoint');
         xpos = round(cp(1,1));
         ypos = round(cp(1,2));
-        if(xpos>=1 && xpos<=size(IMDATA,2) && ypos>=1 && ypos<=size(IMDATA,1))
+        if(xpos>=1 && xpos<=s(2) && ypos>=1 && ypos<=s(1))
+            set(ptext,'string',sprintf('(%u,%u)',ypos,xpos),'Position',[cp(1,1),cp(1,2)]);
             Tx = xpos;
             Ty = ypos;
-            set(ptext,'string',sprintf('(%u,%u)',Tx,s(1)-Ty),'Position',[cp(1,1),cp(1,2)]);
         end
     end
 end
